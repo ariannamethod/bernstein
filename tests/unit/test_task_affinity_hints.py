@@ -85,3 +85,33 @@ def test_file_bridge_preserves_routing_hints(hint: str, max_per_batch: int, conf
         assert all(not {"t1", "t2"}.issubset(task.id for task in batch) for batch in batches)
     elif max_per_batch == 3:
         assert len(batches) == 1
+
+
+@pytest.mark.parametrize("hint", ["model", "cli", "preferred_agent"])
+@pytest.mark.parametrize(
+    ("bridge_hint", "expected_batches"),
+    [
+        pytest.param("first", (("t1", "t3"), ("t2",)), id="matches-left"),
+        pytest.param("second", (("t1",), ("t2", "t3")), id="matches-right"),
+        pytest.param("third", (("t1",), ("t2",), ("t3",)), id="conflicts-with-both"),
+    ],
+)
+def test_pinned_file_bridge_joins_only_compatible_tasks(
+    hint: str, bridge_hint: str, expected_batches: tuple[tuple[str, ...], ...]
+) -> None:
+    """A pinned bridge joins only the group matching its own routing hint."""
+    left = _make_task("t1")
+    right = _make_task("t2")
+    bridge = _make_task("t3")
+    left.owned_files = ["src/left.py"]
+    right.owned_files = ["src/right.py"]
+    bridge.owned_files = ["src/left.py", "src/right.py"]
+    for task, value in zip((left, right, bridge), ("first", "second", bridge_hint), strict=True):
+        if hint == "preferred_agent":
+            task.metadata = {"affinity": {"preferred_agent": value}}
+        else:
+            setattr(task, hint, value)
+
+    batches = group_by_role([left, right, bridge], max_per_batch=3)
+
+    assert sorted(tuple(sorted(task.id for task in batch)) for batch in batches) == sorted(expected_batches)
